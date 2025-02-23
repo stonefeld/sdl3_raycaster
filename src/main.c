@@ -12,13 +12,14 @@
 #include "SDL3/SDL_video.h"
 #include "utils.h"
 
-#define WIDTH      800
-#define HEIGHT     600
-#define BLOCK_SIZE 50
+#define WIDTH      1280
+#define HEIGHT     720
+#define BLOCK_SIZE 20
 
 #define PLAYER_SIZE       20
-#define PLAYER_SPEED      3
-#define PLAYER_TURN_SPEED 0.05
+#define PLAYER_SPEED      2
+#define PLAYER_TURN_SPEED 0.03
+#define PLAYER_FOV        75
 
 struct player {
     float x, y, angle, size;
@@ -91,10 +92,7 @@ float draw_vertical_collision_line(SDL_Renderer *renderer, float cx, float cy, f
         hit_y += increment_y;
     }
 
-    SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
-    SDL_RenderLine(renderer, cx, cy, hit_x, hit_y);
-
-    return 0.0f;
+    return sqrtf((hit_x - cx) * (hit_x - cx) + (hit_y - cy) * (hit_y - cy));
 }
 
 float draw_horizontal_collision_line(SDL_Renderer *renderer, float cx, float cy, float dir_x, float dir_y, float map_y,
@@ -117,13 +115,10 @@ float draw_horizontal_collision_line(SDL_Renderer *renderer, float cx, float cy,
         hit_y += increment_y;
     }
 
-    SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);
-    SDL_RenderLine(renderer, cx, cy, hit_x, hit_y);
-
-    return 0.0f;
+    return sqrtf((hit_x - cx) * (hit_x - cx) + (hit_y - cy) * (hit_y - cy));
 }
 
-void draw_collision_lines(SDL_Renderer *renderer, float angle) {
+float draw_collision_lines(SDL_Renderer *renderer, float angle) {
     float cx = player.x + player.size / 2;
     float cy = player.y + player.size / 2;
 
@@ -140,8 +135,34 @@ void draw_collision_lines(SDL_Renderer *renderer, float angle) {
     int step_y = dir_y > 0 ? 1 : -1;
 
     // draw the vertical and horizontal collision lines
-    draw_vertical_collision_line(renderer, cx, cy, dir_x, dir_y, map_x, step_x);
-    draw_horizontal_collision_line(renderer, cx, cy, dir_x, dir_y, map_y, step_y);
+    float vertical = draw_vertical_collision_line(renderer, cx, cy, dir_x, dir_y, map_x, step_x);
+    float horizontal = draw_horizontal_collision_line(renderer, cx, cy, dir_x, dir_y, map_y, step_y);
+
+    return fminf(vertical, horizontal);
+}
+
+void draw_walls(SDL_Renderer *renderer) {
+    float start = player.angle - PLAYER_FOV * 3.14159 / 360;
+
+    for (int i = 0; i < PLAYER_FOV; i++) {
+        float angle = start + i * 3.14159 / 180;
+        float distance = draw_collision_lines(renderer, angle);
+
+        float point = distance * cosf(angle - player.angle);
+
+        int color = 20 * 255 / distance * 2;
+        if (color > 255)
+            color = 255;
+
+        SDL_SetRenderDrawColor(renderer, color, color, color, 255);
+        SDL_FRect rect = {
+            .x = (float)i * WIDTH / PLAYER_FOV,
+            .y = -1 * (20 * 200) / point + 100,
+            .w = (float)WIDTH / PLAYER_FOV,
+            .h = (20 * 1000) / point,
+        };
+        SDL_RenderFillRect(renderer, &rect);
+    }
 }
 
 int main(int argc, char **argv) {
@@ -153,11 +174,12 @@ int main(int argc, char **argv) {
     char title[30];
     snprintf(title, sizeof(title), "Ray Casting - v%s", RAYCASTER_VERSION);
     WRAP_SDL_ERROR(SDL_CreateWindowAndRenderer(title, WIDTH, HEIGHT, 0, &window, &renderer));
+    WRAP_SDL_ERROR(SDL_SetWindowRelativeMouseMode(window, 1));
 
     unsigned char running = 1;
     SDL_Event event;
 
-    unsigned char move_up = 0, move_down = 0, move_left = 0, move_right = 0;
+    unsigned char move_up = 0, move_down = 0, move_left = 0, move_right = 0, turn_left = 0, turn_right = 0;
     generate_map();
 
     while (running) {
@@ -173,6 +195,9 @@ int main(int argc, char **argv) {
                         case SDLK_S: move_down = 1; break;
                         case SDLK_A: move_left = 1; break;
                         case SDLK_D: move_right = 1; break;
+
+                        case SDLK_LEFT: turn_left = 1; break;
+                        case SDLK_RIGHT: turn_right = 1; break;
                     }
                 } break;
 
@@ -182,23 +207,30 @@ int main(int argc, char **argv) {
                         case SDLK_S: move_down = 0; break;
                         case SDLK_A: move_left = 0; break;
                         case SDLK_D: move_right = 0; break;
+
+                        case SDLK_LEFT: turn_left = 0; break;
+                        case SDLK_RIGHT: turn_right = 0; break;
+
+                        case SDLK_ESCAPE: {
+                            SDL_SetWindowRelativeMouseMode(window, !SDL_GetWindowRelativeMouseMode(window));
+                        } break;
                     }
+                } break;
+
+                case SDL_EVENT_MOUSE_MOTION: {
+                    player.angle += event.motion.xrel * 0.005;
                 } break;
             }
         }
 
-        player.angle += (move_right - move_left) * PLAYER_TURN_SPEED;
-        player.x += (move_up - move_down) * PLAYER_SPEED * cosf(player.angle);
-        player.y += (move_up - move_down) * PLAYER_SPEED * sinf(player.angle);
+        player.angle += (turn_right - turn_left) * PLAYER_TURN_SPEED;
+        player.x += (move_up - move_down) * PLAYER_SPEED * cosf(player.angle) + (move_left - move_right) * PLAYER_SPEED * sinf(player.angle);
+        player.y += (move_up - move_down) * PLAYER_SPEED * sinf(player.angle) - (move_left - move_right) * PLAYER_SPEED * cosf(player.angle);
 
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
 
-        draw_grid(renderer);
-        draw_map(renderer);
-        for (float angle = player.angle - 3.14 / 6; angle < player.angle + 3.14 / 6; angle += 0.01)
-            draw_collision_lines(renderer, angle);
-        draw_player(renderer);
+        draw_walls(renderer);
 
         SDL_RenderPresent(renderer);
         SDL_Delay(16);
