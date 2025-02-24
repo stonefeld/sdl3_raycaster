@@ -23,6 +23,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(SDL)
 
+# Download SDL3_image
+FetchContent_Declare(
+    SDL_image
+    GIT_REPOSITORY https://github.com/libsdl-org/SDL_image.git
+    GIT_TAG main
+    GIT_SHALLOW TRUE
+    GIT_PROGRESS TRUE
+)
+FetchContent_MakeAvailable(SDL_image)
+
 ## PROJECT
 include_directories("include")
 file(GLOB SOURCES "src/*.c")
@@ -30,6 +40,7 @@ add_executable(${PROJECT_NAME} ${SOURCES})
 
 # Linking SDL3
 target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3)
+target_link_libraries(${PROJECT_NAME} PRIVATE SDL3_image::SDL3_image)
 
 ## POST BUILD
 # Move SDL's DLL to the output directory
@@ -37,3 +48,15 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
     $<TARGET_FILE:SDL3::SDL3>
     $<TARGET_FILE_DIR:${PROJECT_NAME}>)
+
+# Move SDL_image's DLL to the output directory
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    $<TARGET_FILE:SDL3_image::SDL3_image>
+    $<TARGET_FILE_DIR:${PROJECT_NAME}>)
+
+# Copy the assets to the output directory
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${PROJECT_SOURCE_DIR}/assets"
+    $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets)
