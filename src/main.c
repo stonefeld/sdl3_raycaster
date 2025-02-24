@@ -1,4 +1,3 @@
-#include "SDL3/SDL_surface.h"
 #define _USE_MATH_DEFINES
 #include <math.h>
 #include <stdio.h>
@@ -10,26 +9,34 @@
 #include "SDL3/SDL_keycode.h"
 #include "SDL3/SDL_rect.h"
 #include "SDL3/SDL_render.h"
+#include "SDL3/SDL_surface.h"
 #include "SDL3/SDL_timer.h"
 #include "SDL3/SDL_video.h"
 #include "SDL3_image/SDL_image.h"
 #include "utils.h"
 
-#define WIDTH      1280
-#define HEIGHT     720
-#define BLOCK_SIZE 10
 
-#define OPACITY_DISTANCE 40
+#define WIDTH      800
+#define HEIGHT     800
+#define BLOCK_SIZE 50
+
+#define OPACITY_DISTANCE 100
 
 #define PLAYER_SIZE           20
 #define PLAYER_MOVEMENT_SPEED 0.5
 #define PLAYER_TURN_SPEED     0.03
 #define PLAYER_PITCH          5
-#define PLAYER_FOV            75
+#define PLAYER_FOV            60
 #define MAX_PITCH             200
 
 struct player {
     float x, y, angle, size, pitch;
+};
+
+struct collision_point {
+    float x, y;
+    float distance;
+    unsigned char horizontal;
 };
 
 static struct player player = {
@@ -40,7 +47,9 @@ static struct player player = {
     .pitch = 0,
 };
 static char map[HEIGHT / BLOCK_SIZE][WIDTH / BLOCK_SIZE];
-static float wall_height = HEIGHT << sizeof(float);
+
+static const float wall_height = HEIGHT << sizeof(float);
+static const float wall_width = (float)WIDTH / PLAYER_FOV;
 
 void generate_map() {
     srand(time(NULL));
@@ -55,8 +64,8 @@ void generate_map() {
     }
 }
 
-float draw_vertical_collision_line(SDL_Renderer *renderer, float cx, float cy, float dir_x, float dir_y, float map_x,
-                                   int step_x) {
+struct collision_point get_vertical_collision(SDL_Renderer *renderer, float cx, float cy, float dir_x, float dir_y,
+                                              float map_x, int step_x) {
     // distance to the next vertical line
     float side_dist_x = ((dir_x > 0) ? ((map_x + 1) * BLOCK_SIZE - cx) : (cx - map_x * BLOCK_SIZE));
     float hipotenuse = fabs(side_dist_x / dir_x);
@@ -75,11 +84,11 @@ float draw_vertical_collision_line(SDL_Renderer *renderer, float cx, float cy, f
         hit_y += increment_y;
     }
 
-    return sqrtf((hit_x - cx) * (hit_x - cx) + (hit_y - cy) * (hit_y - cy));
+    return (struct collision_point){hit_x, hit_y, hypotf(hit_x - cx, hit_y - cy), 0};
 }
 
-float draw_horizontal_collision_line(SDL_Renderer *renderer, float cx, float cy, float dir_x, float dir_y, float map_y,
-                                     int step_y) {
+struct collision_point get_horizontal_collision(SDL_Renderer *renderer, float cx, float cy, float dir_x, float dir_y,
+                                                float map_y, int step_y) {
     // distance to the next horizontal line
     float side_dist_y = ((dir_y > 0) ? ((map_y + 1) * BLOCK_SIZE - cy) : (cy - map_y * BLOCK_SIZE));
     float hipotenuse = fabs(side_dist_y / dir_y);
@@ -98,10 +107,10 @@ float draw_horizontal_collision_line(SDL_Renderer *renderer, float cx, float cy,
         hit_y += increment_y;
     }
 
-    return sqrtf((hit_x - cx) * (hit_x - cx) + (hit_y - cy) * (hit_y - cy));
+    return (struct collision_point){hit_x, hit_y, hypotf(hit_x - cx, hit_y - cy), 1};
 }
 
-float draw_collision_lines(SDL_Renderer *renderer, float angle) {
+struct collision_point get_collision_lines(SDL_Renderer *renderer, float angle) {
     float cx = player.x + player.size / 2;
     float cy = player.y + player.size / 2;
 
@@ -118,52 +127,81 @@ float draw_collision_lines(SDL_Renderer *renderer, float angle) {
     int step_y = dir_y > 0 ? 1 : -1;
 
     // get the collision distances
-    float vertical = draw_vertical_collision_line(renderer, cx, cy, dir_x, dir_y, map_x, step_x);
-    float horizontal = draw_horizontal_collision_line(renderer, cx, cy, dir_x, dir_y, map_y, step_y);
+    struct collision_point vertical = get_vertical_collision(renderer, cx, cy, dir_x, dir_y, map_x, step_x);
+    struct collision_point horizontal = get_horizontal_collision(renderer, cx, cy, dir_x, dir_y, map_y, step_y);
 
     // return the closest distance
-    return vertical < horizontal ? vertical : horizontal;
+    return vertical.distance < horizontal.distance ? vertical : horizontal;
 }
 
-void draw_walls(SDL_Renderer *renderer) {
+void draw_walls(SDL_Renderer *renderer, SDL_Texture *wall_texture) {
     float deg_to_rad = M_PI / 180;
     float start = player.angle - PLAYER_FOV * deg_to_rad / 2;
 
     for (int i = 0; i < PLAYER_FOV; i++) {
         float angle = start + i * deg_to_rad;
-        float distance = draw_collision_lines(renderer, angle);
+        struct collision_point collision = get_collision_lines(renderer, angle);
 
-        float point = distance * cosf(angle - player.angle);
+        float point = collision.distance * cosf(angle - player.angle);
+        float color_mult = OPACITY_DISTANCE / collision.distance;
 
-        unsigned short r = OPACITY_DISTANCE * 228 / distance;
-        unsigned short g = OPACITY_DISTANCE * 230 / distance;
-        unsigned short b = OPACITY_DISTANCE * 168 / distance;
+        unsigned short opacity = 255 * color_mult;
+        if (opacity > 255)
+            opacity = 255;
 
-        SDL_SetRenderDrawColor(renderer, r > 228 ? 228 : r, g > 230 ? 230 : g, b > 168 ? 168 : b, 255);
         float height = wall_height / point;
 
         SDL_FRect rect = {
-            .x = (float)i * WIDTH / PLAYER_FOV,
+            .x = (float)i * wall_width,
             .y = (HEIGHT - height) / 2 - (float)HEIGHT / 6 + player.pitch,
-            .w = (float)WIDTH / PLAYER_FOV,
+            .w = (float)wall_width,
             .h = height,
         };
-        SDL_RenderFillRect(renderer, &rect);
+
+        SDL_FRect src_rect = {
+            .y = 0,
+            .w = ((float)wall_texture->w / BLOCK_SIZE) / point,
+            .h = wall_texture->h,
+        };
+
+        if (collision.horizontal)
+            src_rect.x = ((int)collision.x % BLOCK_SIZE) * (float)wall_texture->w / BLOCK_SIZE;
+        else
+            src_rect.x = ((int)collision.y % BLOCK_SIZE) * (float)wall_texture->w / BLOCK_SIZE;
+
+        SDL_SetTextureColorMod(wall_texture, opacity, opacity, opacity);
+        SDL_RenderTexture(renderer, wall_texture, &src_rect, &rect);
     }
 }
 
 void draw_floor(SDL_Renderer *renderer) {
-    int start_y = (float)HEIGHT / 2 - (float)HEIGHT / 6 + player.pitch;
+    const unsigned int start_y = (float)HEIGHT / 2 - (float)HEIGHT / 6 + player.pitch;
+    const float opacity_dist = (float)OPACITY_DISTANCE / 8;
 
-    for (int i = start_y; i < HEIGHT; i += WIDTH / PLAYER_FOV) {
+    for (int i = start_y; i < HEIGHT; i += wall_width) {
         int original_y = i - player.pitch;
+        float opacity_mult = opacity_dist * original_y;
 
-        unsigned short r = OPACITY_DISTANCE * 2 / 3 * original_y / 198;
-        unsigned short g = OPACITY_DISTANCE * 2 / 3 * original_y / 197;
-        unsigned short b = OPACITY_DISTANCE * 2 / 3 * original_y / 139;
+        unsigned short r = opacity_mult / 255;
+        unsigned short g = opacity_mult / 255;
+        unsigned short b = opacity_mult / 255;
 
-        SDL_SetRenderDrawColor(renderer, r > 198 ? 198 : r, g > 197 ? 197 : g, b > 139 ? 139 : b, 255);
-        SDL_FRect rect = {0, (float)i, (float)WIDTH, (float)WIDTH / PLAYER_FOV};
+        SDL_SetRenderDrawColor(renderer, r > 255 ? 255 : r, g > 255 ? 255 : g, b > 255 ? 255 : b, 255);
+        SDL_FRect rect = {0, (float)i, (float)WIDTH, (float)wall_width};
+        SDL_RenderFillRect(renderer, &rect);
+    }
+
+    // now draw the ceiling
+    for (int i = 0; i < start_y; i += wall_width) {
+        int original_y = HEIGHT - (i - player.pitch + MAX_PITCH);
+        float opacity_mult = opacity_dist * original_y;
+
+        unsigned short r = opacity_mult / 255;
+        unsigned short g = opacity_mult / 255;
+        unsigned short b = opacity_mult / 255;
+
+        SDL_SetRenderDrawColor(renderer, r > 255 ? 255 : r, g > 255 ? 255 : g, b > 255 ? 255 : b, 255);
+        SDL_FRect rect = {0, (float)i, (float)WIDTH, (float)wall_width};
         SDL_RenderFillRect(renderer, &rect);
     }
 }
@@ -188,9 +226,8 @@ int main(int argc, char **argv) {
     unsigned char look_up = 0, look_down = 0, look_left = 0, look_right = 0;
     generate_map();
 
-    SDL_Texture *sky_texture = IMG_LoadTexture(renderer, "assets/sky.png");
-    SDL_SetTextureScaleMode(sky_texture, SDL_SCALEMODE_NEAREST);
-    SDL_FRect sky_texture_rect = {0, 0, WIDTH, (float)sky_texture->h * WIDTH / sky_texture->w};
+    SDL_Texture *wall_texture = IMG_LoadTexture(renderer, "assets/bricks.png");
+    SDL_SetTextureScaleMode(wall_texture, SDL_SCALEMODE_NEAREST);
 
     while (running) {
         while (SDL_PollEvent(&event)) {
@@ -254,7 +291,6 @@ int main(int argc, char **argv) {
         player.y += front_speed * dy - side_speed * dx;
         player.pitch += (look_up - look_down) * PLAYER_PITCH;
 
-        // clamp the player's pitch
         if (player.pitch > MAX_PITCH)
             player.pitch = MAX_PITCH;
         if (player.pitch < -MAX_PITCH)
@@ -262,17 +298,15 @@ int main(int argc, char **argv) {
 
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
-        SDL_RenderTexture(renderer, sky_texture, NULL, &sky_texture_rect);
-        SDL_RenderTextureTiled(renderer, sky_texture, NULL, 2, &sky_texture_rect);
 
         draw_floor(renderer);
-        draw_walls(renderer);
+        draw_walls(renderer, wall_texture);
 
         SDL_RenderPresent(renderer);
         SDL_Delay(16);
     }
 
-    SDL_DestroyTexture(sky_texture);
+    SDL_DestroyTexture(wall_texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
 }
