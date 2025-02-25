@@ -226,7 +226,7 @@ int main(int argc, char **argv) {
     unsigned char look_up = 0, look_down = 0, look_left = 0, look_right = 0;
     generate_map();
 
-    SDL_Texture *wall_texture = IMG_LoadTexture(renderer, "assets/bricks.png");
+    SDL_Texture *wall_texture = IMG_LoadTexture(renderer, "assets/cursed.png");
     SDL_SetTextureScaleMode(wall_texture, SDL_SCALEMODE_NEAREST);
 
     while (running) {
