@@ -158,16 +158,18 @@ void draw_walls(SDL_Renderer *renderer, SDL_Texture *wall_texture) {
             .h = height,
         };
 
+        float tex_x;
+        if (collision.horizontal)
+            tex_x = fmodf(collision.x, BLOCK_SIZE) / BLOCK_SIZE;
+        else
+            tex_x = fmodf(collision.y, BLOCK_SIZE) / BLOCK_SIZE;
+
         SDL_FRect src_rect = {
+            .x = tex_x * wall_texture->w,
             .y = 0,
-            .w = ((float)wall_texture->w / BLOCK_SIZE) / point,
+            .w = 1, // sample a single vertical column
             .h = wall_texture->h,
         };
-
-        if (collision.horizontal)
-            src_rect.x = ((int)collision.x % BLOCK_SIZE) * (float)wall_texture->w / BLOCK_SIZE;
-        else
-            src_rect.x = ((int)collision.y % BLOCK_SIZE) * (float)wall_texture->w / BLOCK_SIZE;
 
         SDL_SetTextureColorMod(wall_texture, opacity, opacity, opacity);
         SDL_RenderTexture(renderer, wall_texture, &src_rect, &rect);
@@ -182,11 +184,11 @@ void draw_floor(SDL_Renderer *renderer) {
         int original_y = i - player.pitch;
         float opacity_mult = opacity_dist * original_y;
 
-        unsigned short r = opacity_mult / 255;
-        unsigned short g = opacity_mult / 255;
-        unsigned short b = opacity_mult / 255;
+        unsigned short color = opacity_mult / 255;
+        if (color > 255)
+            color = 255;
 
-        SDL_SetRenderDrawColor(renderer, r > 255 ? 255 : r, g > 255 ? 255 : g, b > 255 ? 255 : b, 255);
+        SDL_SetRenderDrawColor(renderer, color, color, color, 255);
         SDL_FRect rect = {0, (float)i, (float)WIDTH, (float)wall_width};
         SDL_RenderFillRect(renderer, &rect);
     }
@@ -196,11 +198,11 @@ void draw_floor(SDL_Renderer *renderer) {
         int original_y = HEIGHT - (i - player.pitch + MAX_PITCH);
         float opacity_mult = opacity_dist * original_y;
 
-        unsigned short r = opacity_mult / 255;
-        unsigned short g = opacity_mult / 255;
-        unsigned short b = opacity_mult / 255;
+        unsigned short color = opacity_mult / 255;
+        if (color > 255)
+            color = 255;
 
-        SDL_SetRenderDrawColor(renderer, r > 255 ? 255 : r, g > 255 ? 255 : g, b > 255 ? 255 : b, 255);
+        SDL_SetRenderDrawColor(renderer, color, color, color, 255);
         SDL_FRect rect = {0, (float)i, (float)WIDTH, (float)wall_width};
         SDL_RenderFillRect(renderer, &rect);
     }
